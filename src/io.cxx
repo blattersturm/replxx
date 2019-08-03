@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef _WIN32
 
