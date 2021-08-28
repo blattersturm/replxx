@@ -1,6 +1,7 @@
 #include <regex>
 #include <string>
 #include <vector>
+#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <utility>
@@ -61,7 +62,7 @@ void hook_color(std::string const& str, Replxx::colors_t& colors, std::vector<st
 Replxx::completions_t hook_completion(std::string const& context, int& contextLen, std::vector<std::string> const& examples) {
 	Replxx::completions_t completions;
 	int utf8ContextLen( context_len( context.c_str() ) );
-	int prefixLen( context.length() - utf8ContextLen );
+	int prefixLen( static_cast<int>( context.length() ) - utf8ContextLen );
 	if ( ( prefixLen > 0 ) && ( context[prefixLen - 1] == '\\' ) ) {
 		-- prefixLen;
 		++ utf8ContextLen;
@@ -74,7 +75,13 @@ Replxx::completions_t hook_completion(std::string const& context, int& contextLe
 	} else {
 		for (auto const& e : examples) {
 			if (e.compare(0, prefix.size(), prefix) == 0) {
-				completions.emplace_back(e.c_str());
+				Replxx::Color c( Replxx::Color::DEFAULT );
+				if ( e.find( "brightred" ) != std::string::npos ) {
+					c = Replxx::Color::BRIGHTRED;
+				} else if ( e.find( "red" ) != std::string::npos ) {
+					c = Replxx::Color::RED;
+				}
+				completions.emplace_back(e.c_str(), c);
 			}
 		}
 	}
@@ -89,7 +96,7 @@ Replxx::hints_t hook_hint(std::string const& context, int& contextLen, Replxx::C
 	// or if prefix begins with a specific character
 
 	int utf8ContextLen( context_len( context.c_str() ) );
-	int prefixLen( context.length() - utf8ContextLen );
+	int prefixLen( static_cast<int>( context.length() ) - utf8ContextLen );
 	contextLen = utf8str_codepoint_len( context.c_str() + prefixLen, utf8ContextLen );
 	std::string prefix { context.substr(prefixLen) };
 
@@ -130,6 +137,13 @@ void hook_color(std::string const& context, Replxx::colors_t& colors, std::vecto
 			str = match.suffix();
 		}
 	}
+}
+
+Replxx::ACTION_RESULT message( Replxx& replxx, std::string s, char32_t ) {
+	replxx.invoke( Replxx::ACTION::CLEAR_SELF, 0 );
+	replxx.print( "%s\n", s.c_str() );
+	replxx.invoke( Replxx::ACTION::REPAINT, 0 );
+	return ( Replxx::ACTION_RESULT::CONTINUE );
 }
 
 int main( int argc_, char** argv_ ) {
@@ -235,43 +249,92 @@ int main( int argc_, char** argv_ ) {
 	rx.set_no_color( false );
 
 	// showcase key bindings
-	rx.bind_key( Replxx::KEY::BACKSPACE, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::DELETE_CHARACTER_LEFT_OF_CURSOR, _1 ) );
-	rx.bind_key( Replxx::KEY::DELETE, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::DELETE_CHARACTER_UNDER_CURSOR, _1 ) );
-	rx.bind_key( Replxx::KEY::LEFT, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_LEFT, _1 ) );
-	rx.bind_key( Replxx::KEY::RIGHT, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_RIGHT, _1 ) );
-	rx.bind_key( Replxx::KEY::UP, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_PREVIOUS, _1 ) );
-	rx.bind_key( Replxx::KEY::DOWN, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_NEXT, _1 ) );
-	rx.bind_key( Replxx::KEY::PAGE_UP, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_FIRST, _1 ) );
-	rx.bind_key( Replxx::KEY::PAGE_DOWN, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_LAST, _1 ) );
-	rx.bind_key( Replxx::KEY::HOME, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_TO_BEGINING_OF_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::END, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_TO_END_OF_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::TAB, std::bind( &Replxx::invoke, &rx, Replxx::ACTION::COMPLETE_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::control( Replxx::KEY::LEFT ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_ONE_WORD_LEFT, _1 ) );
-	rx.bind_key( Replxx::KEY::control( Replxx::KEY::RIGHT ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::MOVE_CURSOR_ONE_WORD_RIGHT, _1 ) );
-	rx.bind_key( Replxx::KEY::control( Replxx::KEY::UP ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HINT_PREVIOUS, _1 ) );
-	rx.bind_key( Replxx::KEY::control( Replxx::KEY::DOWN ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HINT_NEXT, _1 ) );
-	rx.bind_key( Replxx::KEY::control( Replxx::KEY::ENTER ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::COMMIT_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'R' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_INCREMENTAL_SEARCH, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'W' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::KILL_TO_WHITESPACE_ON_LEFT, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'U' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::KILL_TO_BEGINING_OF_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'K' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::KILL_TO_END_OF_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'Y' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::YANK, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'L' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::CLEAR_SCREEN, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'D' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::SEND_EOF, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'C' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::ABORT_LINE, _1 ) );
-	rx.bind_key( Replxx::KEY::control( 'T' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::TRANSPOSE_CHARACTERS, _1 ) );
+	rx.bind_key_internal( Replxx::KEY::BACKSPACE,                      "delete_character_left_of_cursor" );
+	rx.bind_key_internal( Replxx::KEY::DELETE,                         "delete_character_under_cursor" );
+	rx.bind_key_internal( Replxx::KEY::LEFT,                           "move_cursor_left" );
+	rx.bind_key_internal( Replxx::KEY::RIGHT,                          "move_cursor_right" );
+	rx.bind_key_internal( Replxx::KEY::UP,                             "history_previous" );
+	rx.bind_key_internal( Replxx::KEY::DOWN,                           "history_next" );
+	rx.bind_key_internal( Replxx::KEY::PAGE_UP,                        "history_first" );
+	rx.bind_key_internal( Replxx::KEY::PAGE_DOWN,                      "history_last" );
+	rx.bind_key_internal( Replxx::KEY::HOME,                           "move_cursor_to_begining_of_line" );
+	rx.bind_key_internal( Replxx::KEY::END,                            "move_cursor_to_end_of_line" );
+	rx.bind_key_internal( Replxx::KEY::TAB,                            "complete_line" );
+	rx.bind_key_internal( Replxx::KEY::control( Replxx::KEY::LEFT ),   "move_cursor_one_word_left" );
+	rx.bind_key_internal( Replxx::KEY::control( Replxx::KEY::RIGHT ),  "move_cursor_one_word_right" );
+	rx.bind_key_internal( Replxx::KEY::control( Replxx::KEY::UP ),     "hint_previous" );
+	rx.bind_key_internal( Replxx::KEY::control( Replxx::KEY::DOWN ),   "hint_next" );
+	rx.bind_key_internal( Replxx::KEY::control( Replxx::KEY::ENTER ),  "commit_line" );
+	rx.bind_key_internal( Replxx::KEY::control( 'R' ),                 "history_incremental_search" );
+	rx.bind_key_internal( Replxx::KEY::control( 'W' ),                 "kill_to_begining_of_word" );
+	rx.bind_key_internal( Replxx::KEY::control( 'U' ),                 "kill_to_begining_of_line" );
+	rx.bind_key_internal( Replxx::KEY::control( 'K' ),                 "kill_to_end_of_line" );
+	rx.bind_key_internal( Replxx::KEY::control( 'Y' ),                 "yank" );
+	rx.bind_key_internal( Replxx::KEY::control( 'L' ),                 "clear_screen" );
+	rx.bind_key_internal( Replxx::KEY::control( 'D' ),                 "send_eof" );
+	rx.bind_key_internal( Replxx::KEY::control( 'C' ),                 "abort_line" );
+	rx.bind_key_internal( Replxx::KEY::control( 'T' ),                 "transpose_characters" );
 #ifndef _WIN32
-	rx.bind_key( Replxx::KEY::control( 'Z' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::SUSPEND, _1 ) );
+	rx.bind_key_internal( Replxx::KEY::control( 'V' ),                 "verbatim_insert" );
+	rx.bind_key_internal( Replxx::KEY::control( 'Z' ),                 "suspend" );
 #endif
-	rx.bind_key( Replxx::KEY::meta( Replxx::KEY::BACKSPACE ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::KILL_TO_BEGINING_OF_WORD, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'p' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_COMMON_PREFIX_SEARCH, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'n' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::HISTORY_COMMON_PREFIX_SEARCH, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'd' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::KILL_TO_END_OF_WORD, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'y' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::YANK_CYCLE, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'u' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::UPPERCASE_WORD, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'l' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::LOWERCASE_WORD, _1 ) );
-	rx.bind_key( Replxx::KEY::meta( 'c' ), std::bind( &Replxx::invoke, &rx, Replxx::ACTION::CAPITALIZE_WORD, _1 ) );
-	rx.bind_key( 'a', std::bind( &Replxx::invoke, &rx, Replxx::ACTION::INSERT_CHARACTER, _1 ) );
+	rx.bind_key_internal( Replxx::KEY::meta( Replxx::KEY::BACKSPACE ), "kill_to_whitespace_on_left" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'p' ),                    "history_common_prefix_search" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'n' ),                    "history_common_prefix_search" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'd' ),                    "kill_to_end_of_word" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'y' ),                    "yank_cycle" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'u' ),                    "uppercase_word" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'l' ),                    "lowercase_word" );
+	rx.bind_key_internal( Replxx::KEY::meta( 'c' ),                    "capitalize_word" );
+	rx.bind_key_internal( 'a',                                         "insert_character" );
+	rx.bind_key_internal( Replxx::KEY::INSERT,                         "toggle_overwrite_mode" );
+	rx.bind_key( Replxx::KEY::F1, std::bind( &message, std::ref( rx ), "<F1>", _1 ) );
+	rx.bind_key( Replxx::KEY::F2, std::bind( &message, std::ref( rx ), "<F2>", _1 ) );
+	rx.bind_key( Replxx::KEY::F3, std::bind( &message, std::ref( rx ), "<F3>", _1 ) );
+	rx.bind_key( Replxx::KEY::F4, std::bind( &message, std::ref( rx ), "<F4>", _1 ) );
+	rx.bind_key( Replxx::KEY::F5, std::bind( &message, std::ref( rx ), "<F5>", _1 ) );
+	rx.bind_key( Replxx::KEY::F6, std::bind( &message, std::ref( rx ), "<F6>", _1 ) );
+	rx.bind_key( Replxx::KEY::F7, std::bind( &message, std::ref( rx ), "<F7>", _1 ) );
+	rx.bind_key( Replxx::KEY::F8, std::bind( &message, std::ref( rx ), "<F8>", _1 ) );
+	rx.bind_key( Replxx::KEY::F9, std::bind( &message, std::ref( rx ), "<F9>", _1 ) );
+	rx.bind_key( Replxx::KEY::F10, std::bind( &message, std::ref( rx ), "<F10>", _1 ) );
+	rx.bind_key( Replxx::KEY::F11, std::bind( &message, std::ref( rx ), "<F11>", _1 ) );
+	rx.bind_key( Replxx::KEY::F12, std::bind( &message, std::ref( rx ), "<F12>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F1 ), std::bind( &message, std::ref( rx ), "<S-F1>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F2 ), std::bind( &message, std::ref( rx ), "<S-F2>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F3 ), std::bind( &message, std::ref( rx ), "<S-F3>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F4 ), std::bind( &message, std::ref( rx ), "<S-F4>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F5 ), std::bind( &message, std::ref( rx ), "<S-F5>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F6 ), std::bind( &message, std::ref( rx ), "<S-F6>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F7 ), std::bind( &message, std::ref( rx ), "<S-F7>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F8 ), std::bind( &message, std::ref( rx ), "<S-F8>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F9 ), std::bind( &message, std::ref( rx ), "<S-F9>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F10 ), std::bind( &message, std::ref( rx ), "<S-F10>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F11 ), std::bind( &message, std::ref( rx ), "<S-F11>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::F12 ), std::bind( &message, std::ref( rx ), "<S-F12>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F1 ), std::bind( &message, std::ref( rx ), "<C-F1>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F2 ), std::bind( &message, std::ref( rx ), "<C-F2>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F3 ), std::bind( &message, std::ref( rx ), "<C-F3>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F4 ), std::bind( &message, std::ref( rx ), "<C-F4>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F5 ), std::bind( &message, std::ref( rx ), "<C-F5>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F6 ), std::bind( &message, std::ref( rx ), "<C-F6>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F7 ), std::bind( &message, std::ref( rx ), "<C-F7>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F8 ), std::bind( &message, std::ref( rx ), "<C-F8>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F9 ), std::bind( &message, std::ref( rx ), "<C-F9>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F10 ), std::bind( &message, std::ref( rx ), "<C-F10>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F11 ), std::bind( &message, std::ref( rx ), "<C-F11>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::F12 ), std::bind( &message, std::ref( rx ), "<C-F12>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::TAB ), std::bind( &message, std::ref( rx ), "<S-Tab>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::HOME ), std::bind( &message, std::ref( rx ), "<C-Home>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::HOME ), std::bind( &message, std::ref( rx ), "<S-Home>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::END ), std::bind( &message, std::ref( rx ), "<C-End>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::END ), std::bind( &message, std::ref( rx ), "<S-End>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::PAGE_UP ), std::bind( &message, std::ref( rx ), "<C-PgUp>", _1 ) );
+	rx.bind_key( Replxx::KEY::control( Replxx::KEY::PAGE_DOWN ), std::bind( &message, std::ref( rx ), "<C-PgDn>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::LEFT ), std::bind( &message, std::ref( rx ), "<S-Left>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::RIGHT ), std::bind( &message, std::ref( rx ), "<S-Right>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::UP ), std::bind( &message, std::ref( rx ), "<S-Up>", _1 ) );
+	rx.bind_key( Replxx::KEY::shift( Replxx::KEY::DOWN ), std::bind( &message, std::ref( rx ), "<S-Down>", _1 ) );
 
 	// display initial welcome message
 	std::cout
@@ -341,11 +404,23 @@ int main( int argc_, char** argv_ ) {
 
 		} else if (input.compare(0, 8, ".history") == 0) {
 			// display the current history
-			for (size_t i = 0, sz = rx.history_size(); i < sz; ++i) {
-				std::cout << std::setw(4) << i << ": " << rx.history_line(i) << "\n";
+			Replxx::HistoryScan hs( rx.history_scan() );
+			for ( int i( 0 ); hs.next(); ++ i ) {
+				std::cout << std::setw(4) << i << ": " << hs.get().text() << "\n";
 			}
 
 			rx.history_add(input);
+			continue;
+
+		} else if (input.compare(0, 6, ".merge") == 0) {
+			history_file = "replxx_history_alt.txt";
+
+			rx.history_add(input);
+			continue;
+
+		} else if (input.compare(0, 5, ".save") == 0) {
+			history_file = "replxx_history_alt.txt";
+			rx.history_save(history_file);
 			continue;
 
 		} else if (input.compare(0, 6, ".clear") == 0) {
@@ -370,7 +445,7 @@ int main( int argc_, char** argv_ ) {
 	}
 
 	// save the history
-	rx.history_save(history_file);
+	rx.history_sync(history_file);
 
 	std::cout << "\nExiting Replxx\n";
 

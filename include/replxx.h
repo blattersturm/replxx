@@ -44,6 +44,24 @@
 extern "C" {
 #endif
 
+/*
+ * For use in Windows DLLs:
+ *
+ * If you are building replxx into a DLL,
+ * unless you are using supplied CMake based build,
+ * ensure that 'REPLXX_BUILDING_DLL' is defined when
+ * building the DLL so that proper symbols are exported.
+ */
+#if defined( _WIN32 ) && ! defined( REPLXX_STATIC )
+#	ifdef REPLXX_BUILDING_DLL
+#		define REPLXX_IMPEXP __declspec( dllexport )
+#	else
+#		define REPLXX_IMPEXP __declspec( dllimport )
+#	endif
+#else
+#	define REPLXX_IMPEXP /**/
+#endif
+
 /*! \brief Color definitions to use in highlighter callbacks.
  */
 typedef enum {
@@ -65,7 +83,6 @@ typedef enum {
 	REPLXX_COLOR_WHITE         = 15,
 	REPLXX_COLOR_NORMAL        = REPLXX_COLOR_LIGHTGRAY,
 	REPLXX_COLOR_DEFAULT       = -1,
-#undef ERROR
 	REPLXX_COLOR_ERROR         = -2
 } ReplxxColor;
 
@@ -109,6 +126,8 @@ enum { REPLXX_KEY_F22          = REPLXX_KEY_F21       + 1 };
 enum { REPLXX_KEY_F23          = REPLXX_KEY_F22       + 1 };
 enum { REPLXX_KEY_F24          = REPLXX_KEY_F23       + 1 };
 enum { REPLXX_KEY_MOUSE        = REPLXX_KEY_F24       + 1 };
+enum { REPLXX_KEY_PASTE_START  = REPLXX_KEY_MOUSE     + 1 };
+enum { REPLXX_KEY_PASTE_FINISH = REPLXX_KEY_PASTE_START + 1 };
 
 #define REPLXX_KEY_SHIFT( key )   ( ( key ) | REPLXX_KEY_BASE_SHIFT )
 #define REPLXX_KEY_CONTROL( key ) ( ( key ) | REPLXX_KEY_BASE_CONTROL )
@@ -122,19 +141,25 @@ enum { REPLXX_KEY_ENTER        = REPLXX_KEY_CONTROL( 'M' ) };
  */
 typedef enum {
 	REPLXX_ACTION_INSERT_CHARACTER,
+	REPLXX_ACTION_NEW_LINE,
 	REPLXX_ACTION_DELETE_CHARACTER_UNDER_CURSOR,
 	REPLXX_ACTION_DELETE_CHARACTER_LEFT_OF_CURSOR,
 	REPLXX_ACTION_KILL_TO_END_OF_LINE,
 	REPLXX_ACTION_KILL_TO_BEGINING_OF_LINE,
 	REPLXX_ACTION_KILL_TO_END_OF_WORD,
 	REPLXX_ACTION_KILL_TO_BEGINING_OF_WORD,
+	REPLXX_ACTION_KILL_TO_END_OF_SUBWORD,
+	REPLXX_ACTION_KILL_TO_BEGINING_OF_SUBWORD,
 	REPLXX_ACTION_KILL_TO_WHITESPACE_ON_LEFT,
 	REPLXX_ACTION_YANK,
 	REPLXX_ACTION_YANK_CYCLE,
+	REPLXX_ACTION_YANK_LAST_ARG,
 	REPLXX_ACTION_MOVE_CURSOR_TO_BEGINING_OF_LINE,
 	REPLXX_ACTION_MOVE_CURSOR_TO_END_OF_LINE,
 	REPLXX_ACTION_MOVE_CURSOR_ONE_WORD_LEFT,
 	REPLXX_ACTION_MOVE_CURSOR_ONE_WORD_RIGHT,
+	REPLXX_ACTION_MOVE_CURSOR_ONE_SUBWORD_LEFT,
+	REPLXX_ACTION_MOVE_CURSOR_ONE_SUBWORD_RIGHT,
 	REPLXX_ACTION_MOVE_CURSOR_LEFT,
 	REPLXX_ACTION_MOVE_CURSOR_RIGHT,
 	REPLXX_ACTION_HISTORY_NEXT,
@@ -148,12 +173,22 @@ typedef enum {
 	REPLXX_ACTION_CAPITALIZE_WORD,
 	REPLXX_ACTION_LOWERCASE_WORD,
 	REPLXX_ACTION_UPPERCASE_WORD,
+	REPLXX_ACTION_CAPITALIZE_SUBWORD,
+	REPLXX_ACTION_LOWERCASE_SUBWORD,
+	REPLXX_ACTION_UPPERCASE_SUBWORD,
 	REPLXX_ACTION_TRANSPOSE_CHARACTERS,
+	REPLXX_ACTION_TOGGLE_OVERWRITE_MODE,
 #ifndef _WIN32
+	REPLXX_ACTION_VERBATIM_INSERT,
 	REPLXX_ACTION_SUSPEND,
 #endif
+	REPLXX_ACTION_BRACKETED_PASTE,
 	REPLXX_ACTION_CLEAR_SCREEN,
+	REPLXX_ACTION_CLEAR_SELF,
+	REPLXX_ACTION_REPAINT,
 	REPLXX_ACTION_COMPLETE_LINE,
+	REPLXX_ACTION_COMPLETE_NEXT,
+	REPLXX_ACTION_COMPLETE_PREVIOUS,
 	REPLXX_ACTION_COMMIT_LINE,
 	REPLXX_ACTION_ABORT_LINE,
 	REPLXX_ACTION_SEND_EOF
@@ -167,24 +202,53 @@ typedef enum {
 	REPLXX_ACTION_RESULT_BAIL      /*!< Stop processing user input, returns nullptr from the \e input() call. */
 } ReplxxActionResult;
 
-typedef struct Replxx Replxx;
+typedef struct ReplxxStateTag {
+	char const* text;
+	int cursorPosition;
+} ReplxxState;
 
-/*! \brief Create Replxx library resouce holder.
+typedef struct Replxx Replxx;
+typedef struct ReplxxHistoryScan ReplxxHistoryScan;
+typedef struct ReplxxHistoryEntryTag {
+	char const* timestamp;
+	char const* text;
+} ReplxxHistoryEntry;
+
+/*! \brief Create Replxx library resource holder.
  *
- * Use replxx_end() to free resoiurce acquired with this function.
+ * Use replxx_end() to free resources acquired with this function.
  *
- * \param in - opened input file stream.
- * \param out - opened output file stream.
- * \param err - opened error file stream.
- * \return Replxx library resouce holder.
+ * \return Replxx library resource holder.
  */
-Replxx* replxx_init( void );
+REPLXX_IMPEXP Replxx* replxx_init( void );
 
 /*! \brief Cleanup resources used by Replxx library.
  *
  * \param replxx - a Replxx library resource holder.
  */
-void replxx_end( Replxx* replxx );
+REPLXX_IMPEXP void replxx_end( Replxx* replxx );
+
+/*! \brief Line modification callback type definition.
+ *
+ * User can observe and modify line contents (and cursor position)
+ * in response to changes to both introduced by the user through
+ * normal interactions.
+ *
+ * When callback returns Replxx updates current line content
+ * and current cursor position to the ones updated by the callback.
+ *
+ * \param line[in,out] - a R/W reference to an UTF-8 encoded input entered by the user so far.
+ * \param cursorPosition[in,out] - a R/W reference to current cursor position.
+ * \param userData - pointer to opaque user data block.
+ */
+typedef void (replxx_modify_callback_t)(char** input, int* contextLen, void* userData);
+
+/*! \brief Register modify callback.
+ *
+ * \param fn - user defined callback function.
+ * \param userData - pointer to opaque user data block to be passed into each invocation of the callback.
+ */
+REPLXX_IMPEXP void replxx_set_modify_callback( Replxx*, replxx_modify_callback_t* fn, void* userData );
 
 /*! \brief Highlighter callback type definition.
  *
@@ -208,7 +272,7 @@ typedef void (replxx_highlighter_callback_t)(char const* input, ReplxxColor* col
  * \param fn - user defined callback function.
  * \param userData - pointer to opaque user data block to be passed into each invocation of the callback.
  */
-void replxx_set_highlighter_callback( Replxx*, replxx_highlighter_callback_t* fn, void* userData );
+REPLXX_IMPEXP void replxx_set_highlighter_callback( Replxx*, replxx_highlighter_callback_t* fn, void* userData );
 
 typedef struct replxx_completions replxx_completions;
 
@@ -222,8 +286,8 @@ typedef struct replxx_completions replxx_completions;
  * input == "if ( obj.me"
  * contextLen == 2 (depending on \e replxx_set_word_break_characters())
  *
- * Client application is free to update \e contextLen to be 6 (or any orther non-negative
- * number not greated than the number of code points in input) if it makes better sense
+ * Client application is free to update \e contextLen to be 6 (or any other non-negative
+ * number not greater than the number of code points in input) if it makes better sense
  * for given client application semantics.
  *
  * \param input - UTF-8 encoded input entered by the user until current cursor position.
@@ -238,14 +302,22 @@ typedef void(replxx_completion_callback_t)(const char* input, replxx_completions
  * \param fn - user defined callback function.
  * \param userData - pointer to opaque user data block to be passed into each invocation of the callback.
  */
-void replxx_set_completion_callback( Replxx*, replxx_completion_callback_t* fn, void* userData );
+REPLXX_IMPEXP void replxx_set_completion_callback( Replxx*, replxx_completion_callback_t* fn, void* userData );
 
 /*! \brief Add another possible completion for current user input.
  *
  * \param completions - pointer to opaque list of user completions.
  * \param str - UTF-8 encoded completion string.
  */
-void replxx_add_completion( replxx_completions* completions, const char* str );
+REPLXX_IMPEXP void replxx_add_completion( replxx_completions* completions, const char* str );
+
+/*! \brief Add another possible completion for current user input.
+ *
+ * \param completions - pointer to opaque list of user completions.
+ * \param str - UTF-8 encoded completion string.
+ * \param color - a color for the completion.
+ */
+REPLXX_IMPEXP void replxx_add_color_completion( replxx_completions* completions, const char* str, ReplxxColor color );
 
 typedef struct replxx_hints replxx_hints;
 
@@ -259,8 +331,8 @@ typedef struct replxx_hints replxx_hints;
  * input == "if ( obj.me"
  * contextLen == 2 (depending on \e replxx_set_word_break_characters())
  *
- * Client application is free to update \e contextLen to be 6 (or any orther non-negative
- * number not greated than the number of code points in input) if it makes better sense
+ * Client application is free to update \e contextLen to be 6 (or any other non-negative
+ * number not greater than the number of code points in input) if it makes better sense
  * for given client application semantics.
  *
  * \param input - UTF-8 encoded input entered by the user until current cursor position.
@@ -276,12 +348,12 @@ typedef void(replxx_hint_callback_t)(const char* input, replxx_hints* hints, int
  * \param fn - user defined callback function.
  * \param userData - pointer to opaque user data block to be passed into each invocation of the callback.
  */
-void replxx_set_hint_callback( Replxx*, replxx_hint_callback_t* fn, void* userData );
+REPLXX_IMPEXP void replxx_set_hint_callback( Replxx*, replxx_hint_callback_t* fn, void* userData );
 
 /*! \brief Key press handler type definition.
  *
  * \param code - the key code replxx got from terminal.
- * \return Decition on how should input() behave after this key handler returns.
+ * \return Decision on how should input() behave after this key handler returns.
  */
 typedef ReplxxActionResult (key_press_handler_t)( int code, void* userData );
 
@@ -290,14 +362,32 @@ typedef ReplxxActionResult (key_press_handler_t)( int code, void* userData );
  * \param hints - pointer to opaque list of hints.
  * \param str - UTF-8 encoded hint string.
  */
-void replxx_add_hint( replxx_hints* hints, const char* str );
+REPLXX_IMPEXP void replxx_add_hint( replxx_hints* hints, const char* str );
 
 /*! \brief Read line of user input.
+ *
+ * Returned pointer is managed by the library and is not to be freed in the client.
  *
  * \param prompt - prompt to be displayed before getting user input.
  * \return An UTF-8 encoded input given by the user (or nullptr on EOF).
  */
-char const* replxx_input( Replxx*, const char* prompt );
+REPLXX_IMPEXP char const* replxx_input( Replxx*, const char* prompt );
+
+/*! \brief Get current state data.
+ *
+ * This call is intended to be used in handlers.
+ *
+ * \param state - buffer for current state of the model.
+ */
+REPLXX_IMPEXP void replxx_get_state( Replxx*, ReplxxState* state );
+
+/*! \brief Set new state data.
+ *
+ * This call is intended to be used in handlers.
+ *
+ * \param state - new state of the model.
+ */
+REPLXX_IMPEXP void replxx_set_state( Replxx*, ReplxxState* state );
 
 /*! \brief Print formatted string to standard output.
  *
@@ -307,13 +397,22 @@ char const* replxx_input( Replxx*, const char* prompt );
  *
  * \param fmt - printf style format.
  */
-int replxx_print( Replxx*, char const* fmt, ... );
+REPLXX_IMPEXP int replxx_print( Replxx*, char const* fmt, ... );
+
+/*! \brief Prints a char array with the given length to standard output.
+ *
+ * \copydetails print
+ *
+ * \param str - The char array to print.
+ * \param length - The length of the array.
+ */
+REPLXX_IMPEXP int replxx_write( Replxx*, char const* str, int length );
 
 /*! \brief Schedule an emulated key press event.
  *
  * \param code - key press code to be emulated.
  */
-void replxx_emulate_key_press( Replxx*, int unsigned code );
+REPLXX_IMPEXP void replxx_emulate_key_press( Replxx*, int unsigned code );
 
 /*! \brief Invoke built-in action handler.
  *
@@ -323,20 +422,33 @@ void replxx_emulate_key_press( Replxx*, int unsigned code );
  * \param code - a supplementary key-code to consume by built-in action handler.
  * \return The action result informing the replxx what shall happen next.
  */
-ReplxxActionResult replxx_invoke( Replxx*, ReplxxAction action, int unsigned code );
+REPLXX_IMPEXP ReplxxActionResult replxx_invoke( Replxx*, ReplxxAction action, int unsigned code );
 
 /*! \brief Bind user defined action to handle given key-press event.
  *
  * \param code - handle this key-press event with following handler.
- * \param handle - use this handler to handle key-press event.
+ * \param handler - use this handler to handle key-press event.
  * \param userData - supplementary user data passed to invoked handlers.
  */
-void replxx_bind_key( Replxx*, int code, key_press_handler_t handler, void* userData );
+REPLXX_IMPEXP void replxx_bind_key( Replxx*, int code, key_press_handler_t handler, void* userData );
 
-void replxx_set_preload_buffer( Replxx*, const char* preloadText );
+/*! \brief Bind internal `replxx` action (by name) to handle given key-press event.
+ *
+ * Action names are the same as unique part of names of ReplxxAction enumerations
+ * but in lower case, e.g.: an action for recalling previous history line
+ * is \e REPLXX_ACTION_HISTORY_PREVIOUS so action name to be used in this
+ * interface for the same effect is "history_previous".
+ *
+ * \param code - handle this key-press event with following handler.
+ * \param actionName - name of internal action to be invoked on key press.
+ * \return -1 if invalid action name was used, 0 otherwise.
+ */
+int replxx_bind_key_internal( Replxx*, int code, char const* actionName );
 
-void replxx_history_add( Replxx*, const char* line );
-int replxx_history_size( Replxx* );
+REPLXX_IMPEXP void replxx_set_preload_buffer( Replxx*, const char* preloadText );
+
+REPLXX_IMPEXP void replxx_history_add( Replxx*, const char* line );
+REPLXX_IMPEXP int replxx_history_size( Replxx* );
 
 /*! \brief Set set of word break characters.
  *
@@ -344,52 +456,116 @@ int replxx_history_size( Replxx* );
  *
  * \param wordBreakers - 7-bit ASCII set of word breaking characters.
  */
-void replxx_set_word_break_characters( Replxx*, char const* wordBreakers );
+REPLXX_IMPEXP void replxx_set_word_break_characters( Replxx*, char const* wordBreakers );
 
 /*! \brief How many completions should trigger pagination.
  */
-void replxx_set_completion_count_cutoff( Replxx*, int count );
+REPLXX_IMPEXP void replxx_set_completion_count_cutoff( Replxx*, int count );
 
 /*! \brief Set maximum number of displayed hint rows.
  */
-void replxx_set_max_hint_rows( Replxx*, int count );
+REPLXX_IMPEXP void replxx_set_max_hint_rows( Replxx*, int count );
+
+/*! \brief Set a delay before hint are shown after user stopped typing..
+ *
+ * \param milliseconds - a number of milliseconds to wait before showing hints.
+ */
+REPLXX_IMPEXP void replxx_set_hint_delay( Replxx*, int milliseconds );
 
 /*! \brief Set tab completion behavior.
  *
  * \param val - use double tab to invoke completions (if != 0).
  */
-void replxx_set_double_tab_completion( Replxx*, int val );
+REPLXX_IMPEXP void replxx_set_double_tab_completion( Replxx*, int val );
 
 /*! \brief Set tab completion behavior.
  *
  * \param val - invoke completion even if user input is empty (if != 0).
  */
-void replxx_set_complete_on_empty( Replxx*, int val );
+REPLXX_IMPEXP void replxx_set_complete_on_empty( Replxx*, int val );
 
 /*! \brief Set tab completion behavior.
  *
  * \param val - beep if completion is ambiguous (if != 0).
  */
-void replxx_set_beep_on_ambiguous_completion( Replxx*, int val );
+REPLXX_IMPEXP void replxx_set_beep_on_ambiguous_completion( Replxx*, int val );
+
+/*! \brief Set complete next/complete previous behavior.
+ *
+ * COMPLETE_NEXT/COMPLETE_PREVIOUS actions have two modes of operations,
+ * in case when a partial completion is possible complete only partial part (`false` setting)
+ * or complete first proposed completion fully (`true` setting).
+ * The default is to complete fully (a `true` setting - complete immediately).
+ *
+ * \param val - complete immediately.
+ */
+REPLXX_IMPEXP void replxx_set_immediate_completion( Replxx*, int val );
+
+/*! \brief Set history duplicate entries behaviour.
+ *
+ * \param val - should history contain only unique entries?
+ */
+REPLXX_IMPEXP void replxx_set_unique_history( Replxx*, int val );
 
 /*! \brief Disable output coloring.
  *
  * \param val - if set to non-zero disable output colors.
  */
-void replxx_set_no_color( Replxx*, int val );
+REPLXX_IMPEXP void replxx_set_no_color( Replxx*, int val );
 
 /*! \brief Set maximum number of entries in history list.
  */
-void replxx_set_max_history_size( Replxx*, int len );
-char const* replxx_history_line( Replxx*, int index );
-int replxx_history_save( Replxx*, const char* filename );
-int replxx_history_load( Replxx*, const char* filename );
-void replxx_clear_screen( Replxx* );
+REPLXX_IMPEXP void replxx_set_max_history_size( Replxx*, int len );
+REPLXX_IMPEXP ReplxxHistoryScan* replxx_history_scan_start( Replxx* );
+REPLXX_IMPEXP void replxx_history_scan_stop( Replxx*, ReplxxHistoryScan* );
+REPLXX_IMPEXP int replxx_history_scan_next( Replxx*, ReplxxHistoryScan*, ReplxxHistoryEntry* );
+
+/*! \brief Synchronize REPL's history with given file.
+ *
+ * Synchronizing means loading existing history from given file,
+ * merging it with current history sorted by timestamps,
+ * saving merged version to given file,
+ * keeping merged version as current REPL's history.
+ *
+ * This call is an equivalent of calling:
+ * replxx_history_save( rx, "some-file" );
+ * replxx_history_load( rx, "some-file" );
+ *
+ * \param filename - a path to the file with which REPL's current history should be synchronized.
+ * \return 0 iff history file was successfully created, -1 otherwise.
+ */
+REPLXX_IMPEXP int replxx_history_sync( Replxx*, const char* filename );
+
+/*! \brief Save REPL's history into given file.
+ *
+ * Saving means loading existing history from given file,
+ * merging it with current history sorted by timestamps,
+ * saving merged version to given file,
+ * keeping original (NOT merged) version as current REPL's history.
+ *
+ * \param filename - a path to the file where REPL's history should be saved.
+ * \return 0 iff history file was successfully created, -1 otherwise.
+ */
+REPLXX_IMPEXP int replxx_history_save( Replxx*, const char* filename );
+
+/*! \brief Load REPL's history from given file.
+ *
+ * \param filename - a path to the file which contains REPL's history that should be loaded.
+ * \return 0 iff history file was successfully opened, -1 otherwise.
+ */
+REPLXX_IMPEXP int replxx_history_load( Replxx*, const char* filename );
+
+/*! \brief Clear REPL's in-memory history.
+ */
+REPLXX_IMPEXP void replxx_history_clear( Replxx* );
+REPLXX_IMPEXP void replxx_clear_screen( Replxx* );
 #ifdef __REPLXX_DEBUG__
 void replxx_debug_dump_print_codes(void);
 #endif
 /* the following is extension to the original linenoise API */
-int replxx_install_window_change_handler( Replxx* );
+REPLXX_IMPEXP int replxx_install_window_change_handler( Replxx* );
+REPLXX_IMPEXP void replxx_enable_bracketed_paste( Replxx* );
+REPLXX_IMPEXP void replxx_disable_bracketed_paste( Replxx* );
 
 #ifdef __cplusplus
 }

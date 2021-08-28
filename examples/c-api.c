@@ -1,4 +1,11 @@
+#ifndef __sun
+#define _POSIX_C_SOURCE 200809L
+#else
+#define __EXTENSIONS__ 1
+#endif
+
 #include <ctype.h>
+#include <string.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,12 +14,31 @@
 #include "replxx.h"
 #include "util.h"
 
+void modify_callback(char** line, int* cursorPosition, void* ud) {
+	char* s = *line;
+	char* p = strchr( s, '*' );
+	if ( p ) {
+		int len = (int)strlen( s );
+		char* n = *line = calloc( len * 2, 1 );
+		int i = (int)( p - s );
+		strncpy(n, s, i);
+		n += i;
+		strncpy(n, s, i);
+		n += i;
+		strncpy(n, p + 1, len - i - 1);
+		n += ( len - i - 1 );
+		strncpy(n, p + 1, len - i - 1);
+		*cursorPosition *= 2;
+		free( s );
+	}
+}
+
 void completionHook(char const* context, replxx_completions* lc, int* contextLen, void* ud) {
 	char** examples = (char**)( ud );
 	size_t i;
 
 	int utf8ContextLen = context_len( context );
-	int prefixLen = strlen( context ) - utf8ContextLen;
+	int prefixLen = (int)strlen( context ) - utf8ContextLen;
 	*contextLen = utf8str_codepoint_len( context + prefixLen, utf8ContextLen );
 	for (i = 0;	examples[i] != NULL; ++i) {
 		if (strncmp(context + prefixLen, examples[i], utf8ContextLen) == 0) {
@@ -25,7 +51,7 @@ void hintHook(char const* context, replxx_hints* lc, int* contextLen, ReplxxColo
 	char** examples = (char**)( ud );
 	int i;
 	int utf8ContextLen = context_len( context );
-	int prefixLen = strlen( context ) - utf8ContextLen;
+	int prefixLen = (int)strlen( context ) - utf8ContextLen;
 	*contextLen = utf8str_codepoint_len( context + prefixLen, utf8ContextLen );
 	if ( *contextLen > 0 ) {
 		for (i = 0;	examples[i] != NULL; ++i) {
@@ -52,6 +78,26 @@ void colorHook( char const* str_, ReplxxColor* colors_, int size_, void* ud ) {
 ReplxxActionResult word_eater( int ignored, void* ud ) {
 	Replxx* replxx = (Replxx*)ud;
 	return ( replxx_invoke( replxx, REPLXX_ACTION_KILL_TO_BEGINING_OF_WORD, 0 ) );
+}
+
+ReplxxActionResult upper_case_line( int ignored, void* ud ) {
+	Replxx* replxx = (Replxx*)ud;
+	ReplxxState state;
+	replxx_get_state( replxx, &state );
+	int l = (int)strlen( state.text );
+#ifdef _WIN32
+#define strdup _strdup
+#endif
+	char* d = strdup( state.text );
+#undef strdup
+	for ( int i = 0; i < l; ++ i ) {
+		d[i] = toupper( d[i] );
+	}
+	state.text = d;
+	state.cursorPosition /= 2;
+	replxx_set_state( replxx, &state );
+	free( d );
+	return ( REPLXX_ACTION_RESULT_CONTINUE );
 }
 
 char const* recode( char* s ) {
@@ -93,6 +139,10 @@ int main( int argc, char** argv ) {
 
 	int quiet = 0;
 	char const* prompt = "\x1b[1;32mreplxx\x1b[0m> ";
+	int installModifyCallback = 0;
+	int installCompletionCallback = 1;
+	int installHighlighterCallback = 1;
+	int installHintsCallback = 1;
 	while ( argc > 1 ) {
 		-- argc;
 		++ argv;
@@ -108,12 +158,20 @@ int main( int argc, char** argv ) {
 			case 'e': replxx_set_complete_on_empty( replxx, (*argv)[1] - '0' );            break;
 			case 'd': replxx_set_double_tab_completion( replxx, (*argv)[1] - '0' );        break;
 			case 'h': replxx_set_max_hint_rows( replxx, atoi( (*argv) + 1 ) );             break;
+			case 'H': replxx_set_hint_delay( replxx, atoi( (*argv) + 1 ) );                break;
 			case 's': replxx_set_max_history_size( replxx, atoi( (*argv) + 1 ) );          break;
 			case 'i': replxx_set_preload_buffer( replxx, recode( (*argv) + 1 ) );          break;
+			case 'I': replxx_set_immediate_completion( replxx, (*argv)[1] - '0' );         break;
+			case 'u': replxx_set_unique_history( replxx, (*argv)[1] - '0' );               break;
 			case 'w': replxx_set_word_break_characters( replxx, (*argv) + 1 );             break;
 			case 'm': replxx_set_no_color( replxx, (*argv)[1] - '0' );                     break;
+			case 'B': replxx_enable_bracketed_paste( replxx );                             break;
 			case 'p': prompt = recode( (*argv) + 1 );                                      break;
 			case 'q': quiet = atoi( (*argv) + 1 );                                         break;
+			case 'M': installModifyCallback = atoi( (*argv) + 1 );                         break;
+			case 'C': installCompletionCallback = 0;                                       break;
+			case 'S': installHighlighterCallback = 0;                                      break;
+			case 'N': installHintsCallback = 0;                                            break;
 			case 'x': split( (*argv) + 1, examples, MAX_EXAMPLE_COUNT );                   break;
 		}
 
@@ -122,10 +180,20 @@ int main( int argc, char** argv ) {
 	const char* file = "./replxx_history.txt";
 
 	replxx_history_load( replxx, file );
-	replxx_set_completion_callback( replxx, completionHook, examples );
-	replxx_set_highlighter_callback( replxx, colorHook, replxx );
-	replxx_set_hint_callback( replxx, hintHook, examples );
+	if ( installModifyCallback ) {
+		replxx_set_modify_callback( replxx, modify_callback, 0 );
+	}
+	if ( installCompletionCallback ) {
+		replxx_set_completion_callback( replxx, completionHook, examples );
+	}
+	if ( installHighlighterCallback ) {
+		replxx_set_highlighter_callback( replxx, colorHook, replxx );
+	}
+	if ( installHintsCallback ) {
+		replxx_set_hint_callback( replxx, hintHook, examples );
+	}
 	replxx_bind_key( replxx, '.', word_eater, replxx );
+	replxx_bind_key( replxx, REPLXX_KEY_F2, upper_case_line, replxx );
 
 	printf("starting...\n");
 
@@ -138,17 +206,22 @@ int main( int argc, char** argv ) {
 		if (result == NULL) {
 			printf("\n");
 			break;
-		} else if (!strncmp(result, "/history", 8)) {
+		} else if (!strncmp(result, "/history", 9)) {
 			/* Display the current history. */
 			int index = 0;
 			int size = replxx_history_size( replxx );
-			for ( ; index < size; ++index) {
-				char const* hist = replxx_history_line( replxx, index );
-				if (hist == NULL) {
-					break;
-				}
-				replxx_print( replxx, "%4d: %s\n", index, hist );
+			ReplxxHistoryScan* hs = replxx_history_scan_start( replxx );
+			ReplxxHistoryEntry he;
+			for ( ; replxx_history_scan_next( replxx, hs, &he ) == 0; ++index ) {
+				replxx_print( replxx, "%4d: %s\n", index, he.text );
 			}
+			replxx_history_scan_stop( replxx, hs );
+		} else if (!strncmp(result, "/unique", 8)) {
+			replxx_set_unique_history( replxx, 1 );
+		} else if (!strncmp(result, "/eb", 4)) {
+			replxx_enable_bracketed_paste( replxx );
+		} else if (!strncmp(result, "/db", 4)) {
+			replxx_disable_bracketed_paste( replxx );
 		}
 		if (*result != '\0') {
 			replxx_print( replxx, quiet ? "%s\n" : "thanks for the input: %s\n", result );
